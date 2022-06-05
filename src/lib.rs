@@ -1,4 +1,42 @@
-//! Check latest GitHub release version
+//! Retrieve releases versions of a repository from GitHub.
+//!
+//! Two functions are exposed by this crate: one to get the latest (Semantic Versioned) version, and
+//! another to get all of the release versions (as `String`s).
+//!
+//! This crate works for public and private GitHub repositories on public GitHub or GitHub enterprise
+//! when supplied with a valid [access token] for that repository / environment.
+//!
+//! The simplest use case is a public repository on github.com:
+//!
+//! ```rust,no_run
+//! use github_release_check::GitHub;
+//!
+//! let github = GitHub::new().unwrap();
+//! let versions = github.get_all_versions("celeo/github_release_check").unwrap();
+//! ```
+//!
+//! If you want to access a private repository on github.com, you'll need an access token for
+//! a user who can view that repository:
+//!
+//! ```rust,no_run
+//! use github_release_check::{GitHub, DEFAULT_API_ROOT};
+//!
+//! let github = GitHub::from_custom(DEFAULT_API_ROOT, "your-access-token").unwrap();
+//! let versions = github.get_all_versions("you/private-repo").unwrap();
+//! ```
+//!
+//! If you are using a private GitHub enterprise environment:
+//!
+//! ```rust,no_run
+//! use github_release_check::GitHub;
+//!
+//! let github = GitHub::from_custom("https://github.your_domain.com/api/v3/", "your-access-token").unwrap();
+//! let versions = github.get_all_versions("you/private-repo").unwrap();
+//! ```
+//!
+//! Of course, handling these `Result`s with something other than just unwrapping them is a good idea.
+//!
+//! [access token]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token
 
 #![deny(
     clippy::all,
@@ -13,12 +51,16 @@
     unused_qualifications,
     unused_results
 )]
+#![allow(clippy::missing_errors_doc)]
 
 use log::debug;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use reqwest::{
     blocking::{Client, ClientBuilder},
     header::{self, HeaderMap},
 };
+use semver::Version;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -50,26 +92,31 @@ pub enum LookupError {
 
 type Result<T> = std::result::Result<T, LookupError>;
 
-const DEFAULT_USER_AGENT: &'static str = "github.com/celeo/github_version_check";
-const DEFAULT_ACCEPT_HEADER: &'static str = "application/vnd.github.v3+json";
+const DEFAULT_USER_AGENT: &str = "github.com/celeo/github_version_check";
+const DEFAULT_ACCEPT_HEADER: &str = "application/vnd.github.v3+json";
 const PAGINATION_REQUEST_AMOUNT: usize = 100;
+static PAGE_EXTRACT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(\w*)page=(\d+)").expect("Could not compile regex"));
 
 /// The default GitHub instance API root endpoint.
-pub const DEFAULT_API_ROOT: &'static str = "https://api.github.com/";
+///
+/// You can use this exported `String` if you want to query
+/// a private repository on <https://github.com>.
+pub const DEFAULT_API_ROOT: &str = "https://api.github.com/";
 
 /// Generate the headers required to send HTTP requests to GitHub.
 fn generate_headers(token: Option<&str>) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    let _ = headers.insert(
+    let _prev = headers.insert(
         header::USER_AGENT,
         header::HeaderValue::from_str(DEFAULT_USER_AGENT)?,
     );
-    let _ = headers.insert(
+    let _prev = headers.insert(
         header::ACCEPT,
         header::HeaderValue::from_str(DEFAULT_ACCEPT_HEADER)?,
     );
     if let Some(t) = token {
-        let _ = headers.insert(
+        let _prev = headers.insert(
             header::AUTHORIZATION,
             header::HeaderValue::from_str(&format!("Bearer {}", t))?,
         );
@@ -129,9 +176,10 @@ impl GitHub {
     /// that has the access to view the repository on that GitHub instance.
     ///
     /// For the `api_endpoint` argument, pass in the REST API root of the GitHub instance. For public
-    /// GitHub, this can be found in `github_release_check::DEFAULT_API_ROOT`: https://api.github.com/.
-    /// Your GitHub enterprise may use a subdomain, or perhaps something like https://github.your_domain_root.com/api/v3/.
-    /// Specify the API root that you can otherwise send requests to. Note that this URL should end in a trailing slash.
+    /// GitHub, this can be found in [`DEFAULT_API_ROOT`].
+    /// Your GitHub enterprise may use a subdomain like `"https://api.github.your_domain_root.com/"`, or
+    /// perhaps something like `"https://github.your_domain_root.com/api/v3/"`. Specify the API root that
+    /// you can otherwise send requests to. Note that this URL should end in a trailing slash.
     ///
     /// # Example
     ///
@@ -177,9 +225,7 @@ impl GitHub {
                 "Querying GitHub at {}, page {} of {}",
                 url,
                 page,
-                last_page
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| String::from("?"))
+                last_page.map_or_else(|| String::from("?"), |p| p.to_string())
             );
             let request = self
                 .client
@@ -188,7 +234,10 @@ impl GitHub {
                 .build()?;
             let response = self.client.execute(request)?;
             if !response.status().is_success() {
-                debug!("Got status {} from GitHub release check", response.status());
+                debug!(
+                    "Got status \"{}\" from GitHub release check",
+                    response.status()
+                );
                 let stat = response.status().as_u16();
                 if stat == 404 {
                     return Err(LookupError::RepositoryNotFound);
@@ -199,19 +248,19 @@ impl GitHub {
                 return Err(LookupError::ErrorHttpResponse(stat));
             }
             if last_page.is_none() {
+                debug!("Determining last page from response headers");
                 last_page = get_last_page(response.headers())?;
             }
             pages.push(response.json()?);
             page += 1;
             match last_page {
                 Some(last) => {
-                    debug!("Completed page {} of {}", page, last);
                     if page >= last {
                         break;
                     }
                 }
                 None => {
-                    debug!("No pagination header found (less than 100 releases)");
+                    debug!("No pagination header found (fewer than 100 releases)");
                     break;
                 }
             }
@@ -226,14 +275,25 @@ impl GitHub {
     /// Get the latest release version from the repository.
     ///
     /// Note that `repository` should be in the format "owner/repo",
-    /// like "celeo/github_release_check".
+    /// like `"celeo/github_release_check"`.
+    ///
+    /// As this function needs to select and return the latest release version,
+    /// it makes use of the "semver" crate's `Version` [parse function]. As there's
+    /// no requirement for repositories to use Semantic Versioning, this function may
+    /// not suitable for every repository (thus the `get_all_versions` function which
+    /// just works with `String`s).
+    ///
+    /// A leading `'v'` character is stripped from the versions
+    /// in order to make more repositories work. For any version string that is not
+    /// able to be loaded into a `Version` struct, it is skipped. Note that this
+    /// may result in no or missing versions.
+    ///
+    /// Effectively, for repositories that are using Semantic Versioning correctly,
+    /// this will work. For those that are not, it's a bit of a toss-up.
     ///
     /// Since this call can fail for a number of reasons including anything related to
     /// the network at the time of the call, the `Result` from this function should
     /// be handled appropriately.
-    ///
-    /// This function can fail due to any sort of network issue, invalid access,
-    /// or if no releases were found for the repository.
     ///
     /// # Example
     ///
@@ -242,28 +302,126 @@ impl GitHub {
     /// let github = GitHub::new().unwrap();
     /// let version_result = github.get_latest_version("celeo/github_release_check");
     /// ```
-    pub fn get_latest_version(&self, repository: &str) -> Result<String> {
+    ///
+    /// [parse function]: https://docs.rs/semver/latest/semver/struct.Version.html#method.parse
+    pub fn get_latest_version(&self, repository: &str) -> Result<Version> {
         let versions = self.get_all_versions(repository)?;
         let latest = versions
             .iter()
+            .map(|s| {
+                let mut s = s.clone();
+                if s.starts_with('v') {
+                    s = s.chars().skip(1).collect();
+                }
+                Version::parse(&s)
+            })
+            .filter_map(std::result::Result::ok)
             .max()
-            .ok_or_else(|| LookupError::NoReleases)?;
-        Ok(latest.to_owned())
+            .ok_or(LookupError::NoReleases)?;
+        Ok(latest)
     }
 }
 
-// Link: <https://api.github.com/repositories/275449421/releases?per_page=1&page=2>; rel="next", <https://api.github.com/repositories/275449421/releases?per_page=1&page=10>; rel="last"
-
 /// Determine the last page (if any) from the GitHub response headers.
 fn get_last_page(headers: &HeaderMap) -> Result<Option<usize>> {
-    let links = match headers.get("Link") {
+    let links = match headers.get("link") {
         Some(l) => l.to_str()?,
         None => return Ok(None),
     };
-    for part in links.split(',') {
-        if part.contains("rel=\"last\"") {
-            // TODO
+    for page_ref in links.split(',') {
+        if !page_ref.contains("rel=\"last\"") {
+            continue;
+        }
+        for cap_part in PAGE_EXTRACT_REGEX.captures_iter(page_ref) {
+            if cap_part[1].is_empty() {
+                let page = cap_part[2]
+                    .parse::<usize>()
+                    .expect("Could not get page version from regex");
+                return Ok(Some(page));
+            }
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_last_page, GitHub};
+
+    use mockito::mock;
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    #[test]
+    fn test_get_last_page_none() {
+        let map = HeaderMap::new();
+        let last = get_last_page(&map).unwrap();
+        assert!(last.is_none());
+    }
+
+    #[test]
+    fn test_get_last_page_some() {
+        let mut map = HeaderMap::new();
+        let _ = map.insert(
+            HeaderName::from_static("link"),
+            HeaderValue::from_static(r#"<https://api.github.com/repositories/275449421/releases?per_page=1&page=2>; rel="next", <https://api.github.com/repositories/275449421/releases?per_page=1&page=10>; rel="last""#)
+        );
+        let last = get_last_page(&map).unwrap();
+        assert_eq!(last, Some(10));
+    }
+
+    #[test]
+    fn test_get_all_versions_none() {
+        let _m = mock("GET", "/repos/foo/bar/releases")
+            .match_query(mockito::Matcher::Any)
+            .with_body("[]")
+            .create();
+        let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
+        let versions = github.get_all_versions("foo/bar").unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn test_get_all_versions_valid() {
+        let _m = mock("GET", "/repos/foo/bar/releases")
+            .match_query(mockito::Matcher::Any)
+            .with_body(
+                r#"[
+                { "tag_name": "v1.0.0" },
+                { "tag_name": "v1.9.10" },
+                { "tag_name": "v0.3.0" }
+            ]"#,
+            )
+            .create();
+        let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
+        let versions = github.get_all_versions("foo/bar").unwrap();
+        assert_eq!(versions.len(), 3);
+    }
+
+    #[test]
+    fn test_get_latest_version_none() {
+        let _m = mock("GET", "/repos/foo/bar/releases")
+            .match_query(mockito::Matcher::Any)
+            .with_body("[]")
+            .create();
+        let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
+        let version_res = github.get_latest_version("foo/bar");
+        assert!(version_res.is_err());
+    }
+
+    #[test]
+    fn test_get_latest_version_bad_semvers() {
+        let _m = mock("GET", "/repos/foo/bar/releases")
+            .match_query(mockito::Matcher::Any)
+            .with_body(
+                r#"[
+                { "tag_name": "uhhhh" },
+                { "tag_name": "v3.0.0-alpha" },
+                { "tag_name": "v1.9.10" }
+            ]"#,
+            )
+            .create();
+        let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
+        let version = github.get_latest_version("foo/bar").unwrap();
+        assert_eq!(version, semver::Version::parse("3.0.0-alpha").unwrap());
+    }
 }

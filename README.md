@@ -13,7 +13,14 @@ Add the latest version to your `Cargo.toml`.
 
 ## Using
 
-[Docs link](https://docs.rs/github_release_check).
+See [the docs](https://docs.rs/github_release_check), but effectively:
+
+```rust
+use github_release_check::GitHub;
+
+let github = GitHub::new().unwrap();
+let versions = github.get_all_versions("celeo/github_release_check").unwrap();
+```
 
 ## Developing
 
