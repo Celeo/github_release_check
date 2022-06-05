@@ -1,0 +1,30 @@
+[package]
+name = "github_release_check"
+version = "0.1.0"
+edition = "2021"
+description = "Check latest GitHub release version"
+readme = "README.md"
+homepage = "https://github.com/celeo/gihub_release_check"
+repository = "https://github.com/celeo/gihub_release_check"
+documentation = "https://docs.rs/gihub_release_check"
+license = "MIT OR Apache-2.0"
+exclude = [
+  ".github"
+]
+keywords = [
+  "github",
+]
+categories = [
+  "api-bindings"
+]
+
+[dependencies]
+log = "0.4.17"
+reqwest = { version = "0.11.10", features = ["blocking"] }
+semver = "1.0.9"
+serde = { version = "1.0.137", features = ["derive"] }
+serde_json = "1.0.81"
+thiserror = "1.0.31"
+
+[dev-dependencies]
+mockito = "0.25.2"
