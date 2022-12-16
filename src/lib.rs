@@ -51,7 +51,6 @@
     unused_qualifications,
     unused_results
 )]
-#![allow(clippy::missing_errors_doc)]
 
 use log::debug;
 use once_cell::sync::Lazy;
@@ -157,6 +156,10 @@ impl GitHub {
     /// use github_release_check::GitHub;
     /// let github = GitHub::new().unwrap();
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function fails if the headers cannot be constructed.
     pub fn new() -> Result<Self> {
         let client = ClientBuilder::new()
             .default_headers(generate_headers(None)?)
@@ -188,6 +191,10 @@ impl GitHub {
     /// let github = GitHub::from_custom("https://github.example.com/api/v3/", "abcdef").unwrap();
     /// ```
     ///
+    /// # Errors
+    ///
+    /// This function fails if the headers cannot be constructed.
+    ///
     /// [GitHub personal access token]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token
     pub fn from_custom(api_endpoint: &str, access_token: &str) -> Result<Self> {
         let client = ClientBuilder::new()
@@ -213,6 +220,12 @@ impl GitHub {
     /// let github = GitHub::new().unwrap();
     /// let versions_result = github.get_all_versions("celeo/github_release_check");
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function fails if the HTTP request cannot be sent, the API returns
+    /// a status code indicating something other than a success (outside of the
+    /// 2xx range), of if the returned data does not match the expected model.
     pub fn get_all_versions(&self, repository: &str) -> Result<Vec<String>> {
         let mut page = 1usize;
         let mut pages = Vec::<Vec<GitHubReleaseItem>>::new();
@@ -300,6 +313,11 @@ impl GitHub {
     /// let version_result = github.get_latest_version("celeo/github_release_check");
     /// ```
     ///
+    /// # Errors
+    ///
+    /// This function fails for any of the reasons in `get_all_versions`, or
+    /// if no versions are returned from the API.
+    ///
     /// [parse function]: https://docs.rs/semver/latest/semver/struct.Version.html#method.parse
     pub fn get_latest_version(&self, repository: &str) -> Result<Version> {
         let versions = self.get_all_versions(repository)?;
@@ -320,6 +338,11 @@ impl GitHub {
 }
 
 /// Determine the last page (if any) from the GitHub response headers.
+///
+/// # Errors
+///
+/// This function fails if the the values in the "link" header
+/// are not valid ASCII.
 fn get_last_page(headers: &HeaderMap) -> Result<Option<usize>> {
     let links = match headers.get("link") {
         Some(l) => l.to_str()?,
@@ -344,7 +367,6 @@ fn get_last_page(headers: &HeaderMap) -> Result<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::{get_last_page, GitHub};
-
     use mockito::mock;
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
