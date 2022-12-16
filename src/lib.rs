@@ -36,6 +36,15 @@
 //!
 //! Of course, handling these `Result`s with something other than just unwrapping them is a good idea.
 //!
+//! If you wish to gain more information on each release, use the `query` function:
+//!
+//! ```rust,no_run
+//! use github_release_check::GitHub;
+//!
+//! let github = GitHub::new().unwrap();
+//! let versions = github.query("celeo/github_release_check").unwrap();
+//! ```
+//!
 //! [access token]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token
 
 #![deny(
@@ -123,10 +132,25 @@ fn generate_headers(token: Option<&str>) -> Result<HeaderMap> {
     Ok(headers)
 }
 
-/// Data in the GitHub API response.
-#[derive(Debug, Deserialize)]
-struct GitHubReleaseItem {
-    tag_name: String,
+/// Data for a release in the GitHub API response.
+///
+/// For information on the struct keys, see [the GitHub docs].
+///
+/// [the GitHub docs]: https://docs.github.com/en/rest/releases/releases#list-releases
+#[derive(Debug, Deserialize, Clone)]
+#[allow(missing_docs)]
+pub struct GitHubReleaseItem {
+    pub url: String,
+    pub assets_url: String,
+    pub upload_url: String,
+    pub html_url: String,
+    pub tag_name: String,
+    pub name: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    pub created_at: String,
+    pub published_at: String,
+    pub body: String,
 }
 
 /// Struct to communicate with the GitHub REST API.
@@ -208,10 +232,8 @@ impl GitHub {
 
     /// Get all release versions from the repository.
     ///
-    /// Just like `get_latest_version` but instead returns
-    /// all the versions in case you need them.
-    ///
-    /// Actually called by `get_latest_version` under the hood.
+    /// Note that `repository` should be in the format "owner/repo",
+    /// like `"celeo/github_release_check"`.
     ///
     /// # Example
     ///
@@ -226,7 +248,7 @@ impl GitHub {
     /// This function fails if the HTTP request cannot be sent, the API returns
     /// a status code indicating something other than a success (outside of the
     /// 2xx range), of if the returned data does not match the expected model.
-    pub fn get_all_versions(&self, repository: &str) -> Result<Vec<String>> {
+    pub fn query(&self, repository: &str) -> Result<Vec<GitHubReleaseItem>> {
         let mut page = 1usize;
         let mut pages = Vec::<Vec<GitHubReleaseItem>>::new();
         let mut last_page: Option<usize> = None;
@@ -276,9 +298,32 @@ impl GitHub {
             }
         }
 
-        Ok(pages
+        Ok(pages.iter().flatten().cloned().collect())
+    }
+
+    /// Get all release version strings from the repository.
+    ///
+    /// Note that `repository` should be in the format "owner/repo",
+    /// like `"celeo/github_release_check"`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use github_release_check::GitHub;
+    /// let github = GitHub::new().unwrap();
+    /// let versions_result = github.get_all_versions("celeo/github_release_check");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function fails if the HTTP request cannot be sent, the API returns
+    /// a status code indicating something other than a success (outside of the
+    /// 2xx range), of if the returned data does not match the expected model.
+    pub fn get_all_versions(&self, repository: &str) -> Result<Vec<String>> {
+        Ok(self
+            .query(repository)?
             .iter()
-            .flat_map(|page| page.iter().map(|item| item.tag_name.clone()))
+            .map(|release| release.tag_name.clone())
             .collect())
     }
 
@@ -401,15 +446,16 @@ mod tests {
 
     #[test]
     fn test_get_all_versions_valid() {
+        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
         let _m = mock("GET", "/repos/foo/bar/releases")
             .match_query(mockito::Matcher::Any)
-            .with_body(
+            .with_body(format!(
                 r#"[
-                { "tag_name": "v1.0.0" },
-                { "tag_name": "v1.9.10" },
-                { "tag_name": "v0.3.0" }
-            ]"#,
-            )
+                {{ "tag_name": "v1.0.0"  {rest}}},
+                {{ "tag_name": "v1.9.10"  {rest}}},
+                {{ "tag_name": "v0.3.0" {rest}}}
+            ]"#
+            ))
             .create();
         let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
         let versions = github.get_all_versions("foo/bar").unwrap();
@@ -429,15 +475,16 @@ mod tests {
 
     #[test]
     fn test_get_latest_version_bad_semvers() {
+        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
         let _m = mock("GET", "/repos/foo/bar/releases")
             .match_query(mockito::Matcher::Any)
-            .with_body(
+            .with_body(format!(
                 r#"[
-                { "tag_name": "uhhhh" },
-                { "tag_name": "v3.0.0-alpha" },
-                { "tag_name": "v1.9.10" }
-            ]"#,
-            )
+                {{ "tag_name": "uhhhh" {rest}}},
+                {{ "tag_name": "v3.0.0-alpha" {rest}}},
+                {{ "tag_name": "v1.9.10" {rest}}}
+            ]"#
+            ))
             .create();
         let github = GitHub::from_custom(&format!("{}/", mockito::server_url()), "").unwrap();
         let version = github.get_latest_version("foo/bar").unwrap();
