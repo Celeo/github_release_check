@@ -1,6 +1,6 @@
 [package]
 name = "github_release_check"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Check latest GitHub release version"
 readme = "README.md"

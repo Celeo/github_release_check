@@ -118,7 +118,7 @@ fn generate_headers(token: Option<&str>) -> Result<HeaderMap> {
     if let Some(t) = token {
         let _prev = headers.insert(
             header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", t))?,
+            header::HeaderValue::from_str(&format!("Bearer {t}"))?,
         );
     }
     Ok(headers)
@@ -253,16 +253,13 @@ impl GitHub {
             }
             pages.push(response.json()?);
             page += 1;
-            match last_page {
-                Some(last) => {
-                    if page >= last {
-                        break;
-                    }
-                }
-                None => {
-                    debug!("No pagination header found (fewer than 100 releases)");
+            if let Some(last) = last_page {
+                if page >= last {
                     break;
                 }
+            } else {
+                debug!("No pagination header found (fewer than 100 releases)");
+                break;
             }
         }
 
