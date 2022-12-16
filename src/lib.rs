@@ -141,16 +141,17 @@ fn generate_headers(token: Option<&str>) -> Result<HeaderMap> {
 #[allow(missing_docs)]
 pub struct GitHubReleaseItem {
     pub url: String,
+    pub html_url: String,
     pub assets_url: String,
     pub upload_url: String,
-    pub html_url: String,
+    pub id: usize,
     pub tag_name: String,
-    pub name: String,
+    pub name: Option<String>,
     pub draft: bool,
     pub prerelease: bool,
     pub created_at: String,
     pub published_at: String,
-    pub body: String,
+    pub body: Option<String>,
 }
 
 /// Struct to communicate with the GitHub REST API.
@@ -446,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_get_all_versions_valid() {
-        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
+        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "id": 1, "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
         let _m = mock("GET", "/repos/foo/bar/releases")
             .match_query(mockito::Matcher::Any)
             .with_body(format!(
@@ -475,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_get_latest_version_bad_semvers() {
-        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
+        let rest = r#", "url": "", "assets_url": "", "upload_url": "", "html_url": "", "id": 1, "name": "", "draft": false, "prerelease": false, "created_at": "", "published_at": "", "body": """#;
         let _m = mock("GET", "/repos/foo/bar/releases")
             .match_query(mockito::Matcher::Any)
             .with_body(format!(
