@@ -1,12 +1,12 @@
 [package]
 name = "github_release_check"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Check latest GitHub release version"
 readme = "README.md"
-homepage = "https://github.com/celeo/gihub_release_check"
-repository = "https://github.com/celeo/gihub_release_check"
-documentation = "https://docs.rs/gihub_release_check"
+homepage = "https://github.com/celeo/github_release_check"
+repository = "https://github.com/celeo/github_release_check"
+documentation = "https://docs.rs/github_release_check"
 license = "MIT OR Apache-2.0"
 exclude = [
   ".github"
